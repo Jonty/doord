@@ -39,9 +39,34 @@ class PerleProtocol(Telnet):
     def __init__(self, perle_actuator, user, password, relay):
         Telnet.__init__(self)
         self.perle_actuator = perle_actuator
-        self.user = user
-        self.password = password
-        self.relay = relay
+        self.user           = user
+        self.password       = password
+        self.relay          = relay
+        self.callid         = None
+
+        self.resetTimer()
+
+    def resetTimer(self):
+        """Call end after 15 seconds to close the connection if the actuator returned no data"""
+        if self.callid != None:
+            self.callid.reset(15)
+        else:
+            self.callid = reactor.callLater(15, self.panic)
+
+    def panic(self):
+        if self.perle_actuator.d != None:
+            logger.log("PerleActuator", "Actuator did not finish after 15 seconds, cleaning up")
+            self.end()
+
+    def end(self):
+        self.perle_actuator.finish_cycle()
+
+        if self.transport != None:
+            self.transport.loseConnection()
+
+        if self.callid != None and self.callid.active():
+            self.callid.cancel()
+            self.callid = None
 
     def write(self, command):
         """docstring for issue_command"""
@@ -53,13 +78,14 @@ class PerleProtocol(Telnet):
         if self.prompt != "" and self.buffer.find(self.prompt) == -1:
             return
 
+        self.resetTimer()
+
         mode = getattr(self, "handle_%s" % self.mode)(self.buffer)
 
         self.buffer = ""
 
         if mode == "Done":
-            self.perle_actuator.finish_cycle()
-            self.transport.loseConnection()
+            self.end()
         elif mode != None:
             self.mode = mode
 
