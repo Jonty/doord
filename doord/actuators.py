@@ -44,9 +44,9 @@ class PerleProtocol(Telnet):
         self.relay          = relay
         self.callid         = None
 
-        self.restartTimer()
+        self.resetTimer()
 
-    def restartTimer(self):
+    def resetTimer(self):
         """Call end after 15 seconds to close the connection if the actuator returned no data"""
         if self.callid != None and self.callid.active():
             self.callid.reset(15)
@@ -55,12 +55,11 @@ class PerleProtocol(Telnet):
 
     def disableTimer(self):
         if self.callid != None and self.callid.active():
-            self.callid.cancel()
+        self.callid.cancel()
 
     def panic(self):
-        if self.perle_actuator.d != None:
-            logger.log("PerleActuator", "Actuator did not finish after 15 seconds, cleaning up")
-            self.end()
+        logger.log("PerleActuator", "Actuator did not finish after 15 seconds, cleaning up")
+        self.end()
 
     def end(self):
         if self.transport != None:
@@ -79,14 +78,12 @@ class PerleProtocol(Telnet):
     def applicationDataReceived(self, data):
         """this is the dispatcher for the state methods"""
         self.buffer += data
-
         if self.prompt != "" and self.buffer.find(self.prompt) == -1:
             return
 
-        self.restartTimer()
+        self.resetTimer()
 
         mode = getattr(self, "handle_%s" % self.mode)(self.buffer)
-
         self.buffer = ""
 
         if mode == "Done":
@@ -98,6 +95,7 @@ class PerleProtocol(Telnet):
         if data.find("Login:") == -1:
             logger.error("PerleActuator", "got unexpected input in state WaitForUser: %s" % data)
             return "Done"
+
         self.write(self.user)
         self.prompt = "Password:"
         return "WaitForPassword"
@@ -106,13 +104,14 @@ class PerleProtocol(Telnet):
         if data.find("Password:") == -1:
             logger.error("PerleActuator", "got unexpected input in state WaitForPassword: %s" % data)
             return "Done"
+
         self.write(self.password + '\r\n')
         self.prompt = "DS1 D2R2#"
         return "WaitForIssueLoginCheck"
 
     def handle_WaitForIssueLoginCheck(self, data):
-         self.write('show iochannel status')
-         return "WaitForLoginCheck"
+        self.write('show iochannel status')
+        return "WaitForLoginCheck"
 
     def handle_WaitForLoginCheck(self, data):
          if not any_line_matches('^%s.+Inactive' % self.relay.upper(), data):
@@ -123,7 +122,7 @@ class PerleProtocol(Telnet):
          return "WaitForIssueActivationConfirmation"
 
     def openDoor(self):
-         self.restartTimer()
+         self.resetTimer()
          self.write('iochannel %s output activate' % self.relay)
 
     def handle_WaitForIssueActivationConfirmation(self, data):
@@ -163,20 +162,20 @@ class PerleActuator(Actuator):
     def initialise(self):
         self.perle = None
 
-        if self.d != None:
-            logger.log("PerleActuator", "operated while in activation cycle")
-            return
-
         c = ClientCreator(reactor, PerleProtocol, self, self.user, self.password, self.relay)
         deferred = c.connectTCP(self.ip, self.port)
-    
+
         deferred.addCallbacks(self.connected, self.error)
 
-        self.d = defer.Deferred()
-
     def operate(self):
-        self.perle.openDoor()
-        return self.d
+        # FIXME: PerleProtocol should probably have a .waitingForActivation() method
+        if self.perle and self.perle.mode == "WaitForIssueActivationConfirmation" and self.d == None:
+            self.perle.openDoor()
+            self.d = defer.Deferred()
+            return self.d
+        else:
+            logger.log("PerleActuator", "operated while in activation cycle")
+            return
 
     def connected(self, perle):
         self.perle = perle
