@@ -55,7 +55,7 @@ class PerleProtocol(Telnet):
 
     def disableTimer(self):
         if self.callid != None and self.callid.active():
-        self.callid.cancel()
+            self.callid.cancel()
 
     def panic(self):
         logger.log("PerleActuator", "Actuator did not finish after 15 seconds, cleaning up")
